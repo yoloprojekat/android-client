@@ -327,12 +327,10 @@ class MainActivity : ComponentActivity() {
                                 processFrame(bitmap)
                             }
 
-                            // Keep the remaining bytes for the next frame
                             val remainingData = data.copyOfRange(endIndex + 2, data.size)
                             streamBuffer.reset()
                             streamBuffer.write(remainingData)
                         } else if (streamBuffer.size() > 5 * 1024 * 1024) {
-                            // Failsafe: Prevent memory leak if stream format gets corrupted
                             streamBuffer.reset()
                         }
                     }
@@ -480,9 +478,27 @@ class MainActivity : ComponentActivity() {
     fun BoxScope.DPadBtn(label: String, btnAlign: Alignment, size: androidx.compose.ui.unit.Dp, cmd: String, onStart: (String) -> Unit, onStop: () -> Unit) {
         var isPressed by remember { mutableStateOf(false) }
         val currentColorScheme = MaterialTheme.colorScheme
+
+        LaunchedEffect(isPressed) {
+            if (isPressed) {
+                while (true) {
+                    onStart(cmd)
+                    delay(500)
+                }
+            }
+        }
+
         Surface(
             modifier = Modifier.size(size).align(btnAlign).pointerInput(Unit) {
-                detectTapGestures(onPress = { try { isPressed = true; onStart(cmd); awaitRelease() } finally { isPressed = false; onStop() } })
+                detectTapGestures(onPress = {
+                    try {
+                        isPressed = true
+                        awaitRelease()
+                    } finally {
+                        isPressed = false
+                        onStop()
+                    }
+                })
             },
             shape = RoundedCornerShape(16.dp), color = if (isPressed) ThemeBlue else currentColorScheme.surface, border = BorderStroke(1.dp, ThemeBlue.copy(0.1f))
         ) { Box(contentAlignment = Alignment.Center) { Text(label, fontSize = 24.sp, color = if (isPressed) Color.White else ThemeBlue) } }
@@ -492,9 +508,27 @@ class MainActivity : ComponentActivity() {
     fun BoxScope.RotationBtn(icon: ImageVector, btnAlign: Alignment, cmd: String, onStart: (String) -> Unit, onStop: () -> Unit) {
         var isPressed by remember { mutableStateOf(false) }
         val currentColorScheme = MaterialTheme.colorScheme
+
+        LaunchedEffect(isPressed) {
+            if (isPressed) {
+                while (true) {
+                    onStart(cmd)
+                    delay(500)
+                }
+            }
+        }
+
         Surface(
             modifier = Modifier.size(56.dp).align(btnAlign).pointerInput(Unit) {
-                detectTapGestures(onPress = { try { isPressed = true; onStart(cmd); awaitRelease() } finally { isPressed = false; onStop() } })
+                detectTapGestures(onPress = {
+                    try {
+                        isPressed = true
+                        awaitRelease()
+                    } finally {
+                        isPressed = false
+                        onStop()
+                    }
+                })
             },
             shape = CircleShape, color = if (isPressed) ThemeBlue else currentColorScheme.surface, border = BorderStroke(1.dp, ThemeBlue.copy(0.2f))
         ) { Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(28.dp), if (isPressed) Color.White else ThemeBlue) } }
@@ -504,12 +538,27 @@ class MainActivity : ComponentActivity() {
     fun CircularJoystick(onCmd: (String) -> Unit) {
         var offX by remember { mutableFloatStateOf(0f) }
         var offY by remember { mutableFloatStateOf(0f) }
+        var activeCmd by remember { mutableStateOf<String?>(null) }
         val radius = 100f
         val currentColorScheme = MaterialTheme.colorScheme
+
+        LaunchedEffect(activeCmd) {
+            activeCmd?.let { cmd ->
+                while (true) {
+                    onCmd(cmd)
+                    delay(500)
+                }
+            }
+        }
+
         Box(
             Modifier.size(200.dp).background(currentColorScheme.surface, CircleShape).border(1.dp, ThemeBlue.copy(0.1f), CircleShape)
                 .pointerInput(Unit) {
-                    detectDragGestures(onDragEnd = { offX = 0f; offY = 0f; onCmd("stop") }) { change, drag ->
+                    detectDragGestures(onDragEnd = {
+                        offX = 0f; offY = 0f
+                        activeCmd = null
+                        onCmd("stop")
+                    }) { change, drag ->
                         change.consume()
                         val nX = offX + drag.x
                         val nY = offY + drag.y
@@ -517,6 +566,7 @@ class MainActivity : ComponentActivity() {
                         val factor = if (dist > radius) radius / dist else 1f
                         offX = nX * factor
                         offY = nY * factor
+
                         if (dist > 40f) {
                             val angle = Math.toDegrees(atan2(offY.toDouble(), offX.toDouble()))
                             val cmd = when {
@@ -525,7 +575,14 @@ class MainActivity : ComponentActivity() {
                                 angle > -135 && angle <= -45 -> "napred"
                                 else -> "levo"
                             }
-                            onCmd(cmd)
+                            if (activeCmd != cmd) {
+                                activeCmd = cmd
+                            }
+                        } else {
+                            if (activeCmd != null) {
+                                activeCmd = null
+                                onCmd("stop")
+                            }
                         }
                     }
                 }, Alignment.Center
