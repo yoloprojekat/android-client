@@ -11,8 +11,8 @@ android {
         applicationId = "com.yolo.vozilo"
         minSdk = 24
         targetSdk = 36
-        versionCode = 7
-        versionName = "3.1"
+        versionCode = 9
+        versionName = "3.2.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -58,6 +58,8 @@ android {
             useLegacyPackaging = false
         }
     }
+    compileSdkMinor = 1
+    buildToolsVersion = "36.1.0"
 }
 
 dependencies {
@@ -82,8 +84,7 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 
-    // webrct & udp
-    implementation("io.getstream:stream-webrtc-android:1.2.1")
-    implementation("com.squareup.okhttp3:okhttp:4.11.0")
+    //udp
+    implementation(libs.okhttp)
     // Ensure OkHttp is up to date
 }

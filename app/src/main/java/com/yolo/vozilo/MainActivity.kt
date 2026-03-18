@@ -51,14 +51,9 @@ import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import org.webrtc.*
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.net.DatagramPacket
-import java.net.DatagramSocket
-import java.net.InetAddress
 import kotlin.math.atan2
-import kotlin.math.min
 import kotlin.math.sqrt
 
 private val ThemeBlue = Color(0xFF3498DB)
@@ -79,13 +74,8 @@ class MainActivity : ComponentActivity() {
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val httpClient = OkHttpClient()
 
-    // --- UDP Networking ---
-    private var udpSocket: DatagramSocket? = null
-    private var robotAddress: InetAddress? = null
-
-    // --- WebRTC ---
-    private var peerConnectionFactory: PeerConnectionFactory? = null
-    private var peerConnection: PeerConnection? = null
+    // --- HTTP Networking ---
+    private var streamJob: Job? = null
 
     // --- ML Kit ---
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
@@ -113,8 +103,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        initNetworking()
-
         setContent {
             VoziloTheme {
                 val context = LocalContext.current
@@ -134,9 +122,9 @@ class MainActivity : ComponentActivity() {
 
                         if (cmd != null) {
                             isOcrAutoPilot = false
-                            sendUdpCmd(cmd)
+                            sendCommand(cmd)
                             delay(1500)
-                            sendUdpCmd("stop")
+                            sendCommand("stop")
                             delay(500)
                             ocrResultText = ""
                             isOcrAutoPilot = true
@@ -152,20 +140,20 @@ class MainActivity : ComponentActivity() {
                         val normalizedX = centerX.toFloat() / frameWidth
 
                         when {
-                            normalizedX < 0.35f -> sendUdpCmd("levo")
-                            normalizedX > 0.65f -> sendUdpCmd("desno")
-                            else -> sendUdpCmd("napred")
+                            normalizedX < 0.35f -> sendCommand("levo")
+                            normalizedX > 0.65f -> sendCommand("desno")
+                            else -> sendCommand("napred")
                         }
                     } else if (isFollowActive && (detectedObjects.isEmpty() || !isYoloActive)) {
-                        sendUdpCmd("stop")
+                        sendCommand("stop")
                     }
                 }
 
                 LaunchedEffect(isCamOn) {
                     if (isCamOn) {
-                        startWebRTC()
+                        startHttpStream()
                     } else {
-                        stopWebRTC()
+                        stopHttpStream()
                         currentFrame = null
                         isRecording = false
                         isFollowActive = false
@@ -243,7 +231,7 @@ class MainActivity : ComponentActivity() {
                                             backgroundColor = if (isFollowActive) ThemeSuccess else Color.Gray
                                         ) {
                                             isFollowActive = !isFollowActive
-                                            if (!isFollowActive) sendUdpCmd("stop")
+                                            if (!isFollowActive) sendCommand("stop")
                                         }
                                     }
 
@@ -255,7 +243,7 @@ class MainActivity : ComponentActivity() {
                                             backgroundColor = if (isOcrAutoPilot) ThemeSuccess else Color.Gray
                                         ) {
                                             isOcrAutoPilot = !isOcrAutoPilot
-                                            if (!isOcrAutoPilot) sendUdpCmd("stop")
+                                            if (!isOcrAutoPilot) sendCommand("stop")
                                         }
                                     }
                                 }
@@ -272,9 +260,9 @@ class MainActivity : ComponentActivity() {
 
                         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                             if (useJoystick) {
-                                CircularJoystick { sendUdpCmd(it) }
+                                CircularJoystick { sendCommand(it) }
                             } else {
-                                CompactDPad(onStart = { sendUdpCmd(it) }, onStop = { sendUdpCmd("stop") })
+                                CompactDPad(onStart = { sendCommand(it) }, onStop = { sendCommand("stop") })
                             }
                         }
                     }
@@ -283,99 +271,104 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun initNetworking() {
+    private fun sendCommand(cmd: String) {
         scope.launch(Dispatchers.IO) {
             try {
-                udpSocket = DatagramSocket()
-                robotAddress = InetAddress.getByName("192.168.4.1")
-            } catch (e: Exception) {
-                Log.e("Networking", "Failed to initialize UDP socket", e)
-            }
-        }
-    }
-
-    private fun sendUdpCmd(cmd: String) {
-        if (robotAddress == null || udpSocket == null) return
-        scope.launch(Dispatchers.IO) {
-            try {
-                val data = cmd.toByteArray()
-                val packet = DatagramPacket(data, data.size, robotAddress, 1606)
-                udpSocket?.send(packet)
-            } catch (e: Exception) {
-                Log.e("UDP", "Send failed: ${e.message}")
-            }
-        }
-    }
-
-    private fun startWebRTC() {
-        PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(this).createInitializationOptions())
-        val options = PeerConnectionFactory.Options()
-        peerConnectionFactory = PeerConnectionFactory.builder().setOptions(options).createPeerConnectionFactory()
-
-        val iceServers = listOf(PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer())
-
-        peerConnection = peerConnectionFactory?.createPeerConnection(iceServers, object : CustomPeerConnectionObserver() {
-            override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
-                connected = state == PeerConnection.IceConnectionState.CONNECTED
-            }
-
-            override fun onAddTrack(receiver: RtpReceiver?, mediaStreams: Array<out MediaStream>?) {
-                val track = receiver?.track() as? VideoTrack ?: return
-                track.addSink { frame -> processWebRTCFrame(frame) }
-            }
-        })
-
-        peerConnection?.addTransceiver(MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO, RtpTransceiver.RtpTransceiverInit(RtpTransceiver.RtpTransceiverDirection.RECV_ONLY))
-
-        peerConnection?.createOffer(object : CustomSdpObserver() {
-            override fun onCreateSuccess(desc: SessionDescription?) {
-                desc?.let {
-                    peerConnection?.setLocalDescription(CustomSdpObserver(), it)
-                    postOfferToServer(it)
-                }
-            }
-        }, MediaConstraints())
-    }
-
-    private fun postOfferToServer(sdp: SessionDescription) {
-        scope.launch(Dispatchers.IO) {
-            try {
-                val json = JSONObject().apply {
-                    put("sdp", sdp.description)
-                    put("type", sdp.type.canonicalForm())
-                }.toString()
-
+                val json = JSONObject().apply { put("cmd", cmd) }.toString()
                 val body = json.toRequestBody("application/json".toMediaType())
-                val request = Request.Builder().url("http://192.168.4.1:1607/offer").post(body).build()
+                val request = Request.Builder()
+                    .url("http://192.168.4.1:1607/control")
+                    .post(body)
+                    .build()
 
                 httpClient.newCall(request).execute().use { response ->
-                    if (response.isSuccessful) {
-                        val respJson = JSONObject(response.body?.string() ?: "")
-                        val remoteSdp = SessionDescription(SessionDescription.Type.fromCanonicalForm(respJson.getString("type")), respJson.getString("sdp"))
-                        peerConnection?.setRemoteDescription(CustomSdpObserver(), remoteSdp)
+                    if (!response.isSuccessful) {
+                        Log.e("HTTP_CMD", "Unexpected code $response")
                     }
                 }
-            } catch (e: Exception) { Log.e("WebRTC", "Signaling failed", e) }
+            } catch (e: Exception) {
+                Log.e("HTTP_CMD", "Send failed: ${e.message}")
+            }
         }
     }
 
-    private fun processWebRTCFrame(frame: VideoFrame) {
+    private fun startHttpStream() {
+        streamJob?.cancel()
+        streamJob = scope.launch(Dispatchers.IO) {
+            try {
+                val request = Request.Builder().url("http://192.168.4.1:1607/video_feed").build()
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        connected = false
+                        return@launch
+                    }
+                    connected = true
+                    val inputStream = response.body.byteStream()
+
+                    val buffer = ByteArray(8192)
+                    var bytesRead: Int
+                    val streamBuffer = ByteArrayOutputStream()
+
+                    while (isActive) {
+                        bytesRead = inputStream.read(buffer)
+                        if (bytesRead == -1) break
+
+                        streamBuffer.write(buffer, 0, bytesRead)
+                        val data = streamBuffer.toByteArray()
+
+                        val startIndex = findJpegStart(data)
+                        val endIndex = findJpegEnd(data, startIndex)
+
+                        if (startIndex != -1 && endIndex != -1) {
+                            val jpegData = data.copyOfRange(startIndex, endIndex + 2)
+                            val bitmap = BitmapFactory.decodeByteArray(jpegData, 0, jpegData.size)
+
+                            if (bitmap != null) {
+                                processFrame(bitmap)
+                            }
+
+                            // Keep the remaining bytes for the next frame
+                            val remainingData = data.copyOfRange(endIndex + 2, data.size)
+                            streamBuffer.reset()
+                            streamBuffer.write(remainingData)
+                        } else if (streamBuffer.size() > 5 * 1024 * 1024) {
+                            // Failsafe: Prevent memory leak if stream format gets corrupted
+                            streamBuffer.reset()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("HTTP_STREAM", "Stream error", e)
+                connected = false
+            }
+        }
+    }
+
+    private fun findJpegStart(data: ByteArray): Int {
+        for (i in 0 until data.size - 1) {
+            if (data[i] == 0xFF.toByte() && data[i + 1] == 0xD8.toByte()) return i
+        }
+        return -1
+    }
+
+    private fun findJpegEnd(data: ByteArray, startIndex: Int): Int {
+        if (startIndex == -1) return -1
+        for (i in startIndex until data.size - 1) {
+            if (data[i] == 0xFF.toByte() && data[i + 1] == 0xD9.toByte()) return i
+        }
+        return -1
+    }
+
+    private fun stopHttpStream() {
+        streamJob?.cancel()
+        streamJob = null
+        connected = false
+    }
+
+    private fun processFrame(bitmap: Bitmap) {
         val currentTime = System.currentTimeMillis()
         if (currentTime - lastFrameProcessTime < 66) return
         lastFrameProcessTime = currentTime
-
-        frame.retain() // Critical: Retain native memory pointer before processing
-
-        val buffer = frame.buffer
-        val i420Buffer = buffer.toI420()
-
-        if (i420Buffer == null) {
-            frame.release() // Clean up if buffer extraction fails
-            return
-        }
-
-        val bitmap = i420ToBitmap(i420Buffer)
-        frame.release() // Release the original frame wrapper
 
         scope.launch(Dispatchers.Main) {
             currentFrame = bitmap
@@ -398,47 +391,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun i420ToBitmap(i420: VideoFrame.I420Buffer): Bitmap {
-        val width = i420.width
-        val height = i420.height
-        val yuvBytes = ByteArray(width * height * 3 / 2)
-
-        val yBuffer = i420.dataY
-        val uBuffer = i420.dataU
-        val vBuffer = i420.dataV
-
-        val ySize = yBuffer.remaining()
-        val uSize = uBuffer.remaining()
-        val vSize = vBuffer.remaining()
-
-        yBuffer.get(yuvBytes, 0, ySize)
-
-        var uvIndex = ySize
-        for (i in 0 until min(uSize, vSize)) {
-            yuvBytes[uvIndex++] = vBuffer.get(i)
-            yuvBytes[uvIndex++] = uBuffer.get(i)
-        }
-
-        val yuvImage = YuvImage(yuvBytes, ImageFormat.NV21, width, height, null)
-        val out = ByteArrayOutputStream()
-        yuvImage.compressToJpeg(Rect(0, 0, width, height), 80, out)
-        val imageBytes = out.toByteArray()
-        val bitmap = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
-
-        i420.release() // Release JNI memory for this specific I420 frame
-        return bitmap
-    }
-
-    private fun stopWebRTC() {
-        peerConnection?.close()
-        peerConnection = null
-        connected = false
-    }
-
     override fun onDestroy() {
         super.onDestroy()
-        stopWebRTC()
-        udpSocket?.close()
+        stopHttpStream()
         recognizer.close()
         objectDetector.close()
         scope.cancel()
@@ -660,26 +615,4 @@ class MainActivity : ComponentActivity() {
         val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
         uri?.let { dest -> contentResolver.openOutputStream(dest)?.use { out -> bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out) } }
     }
-}
-
-// --- Helper Classes for WebRTC Observables ---
-open class CustomPeerConnectionObserver : PeerConnection.Observer {
-    override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
-    override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {}
-    override fun onIceConnectionReceivingChange(receiving: Boolean) {}
-    override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
-    override fun onIceCandidate(candidate: IceCandidate?) {}
-    override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
-    override fun onAddStream(stream: MediaStream?) {}
-    override fun onRemoveStream(stream: MediaStream?) {}
-    override fun onDataChannel(dataChannel: DataChannel?) {}
-    override fun onRenegotiationNeeded() {}
-    override fun onAddTrack(receiver: RtpReceiver?, mediaStreams: Array<out MediaStream>?) {}
-}
-
-open class CustomSdpObserver : SdpObserver {
-    override fun onCreateSuccess(desc: SessionDescription?) {}
-    override fun onSetSuccess() {}
-    override fun onCreateFailure(error: String?) {}
-    override fun onSetFailure(error: String?) {}
 }
