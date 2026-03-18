@@ -277,7 +277,7 @@ class MainActivity : ComponentActivity() {
                 val json = JSONObject().apply { put("cmd", cmd) }.toString()
                 val body = json.toRequestBody("application/json".toMediaType())
                 val request = Request.Builder()
-                    .url("http://192.168.4.1:1607/control")
+                    .url("http://pametno-vozilo.local:1607/control")
                     .post(body)
                     .build()
 
@@ -296,7 +296,7 @@ class MainActivity : ComponentActivity() {
         streamJob?.cancel()
         streamJob = scope.launch(Dispatchers.IO) {
             try {
-                val request = Request.Builder().url("http://192.168.4.1:1607/video_feed").build()
+                val request = Request.Builder().url("http://pametno-vozilo.local:1607/video_feed").build()
                 httpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
                         connected = false
