@@ -11,12 +11,18 @@ android {
         applicationId = "com.yolo.vozilo"
         minSdk = 24
         targetSdk = 36
-        versionCode = 10
+
+        // --- ADDED: AUTOMATIC VERSION BUMP LOGIC ---
+        // Looks for the -PversionCode parameter from GitHub Actions. 
+        // If you build locally (where that parameter doesn't exist), it safely defaults to 10.
+        val ciVersionCode = project.findProperty("versionCode")?.toString()?.toIntOrNull() ?: 10
+        versionCode = ciVersionCode
+
         versionName = "3.2.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    // --- ADDED SIGNING CONFIG ---
+    // --- SIGNING CONFIG ---
     signingConfigs {
         create("release") {
             // Checks for local file in project root, otherwise looks for GitHub Runner file
@@ -83,8 +89,4 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
-
-    //udp
-    implementation(libs.okhttp)
-    // Ensure OkHttp is up to date
 }

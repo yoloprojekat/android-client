@@ -35,8 +35,12 @@ jobs:
         # Decodes the secret into the root folder where Gradlew can find it easily
         run: echo "${{ secrets.SIGNING_KEY }}" | base64 --decode > release.keystore
 
-      - name: Build Release APK
-        run: ./gradlew assembleRelease
+      - name: Build Release APK with Version Bump
+        # Adds the GitHub Run Number to your base version (10). 
+        # First run = 11, second run = 12, etc.
+        run: |
+          NEW_VERSION_CODE=$(( 10 + ${{ github.run_number }} ))
+          ./gradlew assembleRelease -PversionCode=$NEW_VERSION_CODE
         env:
           # These names must match what you use in your app/build.gradle.kts
           RELEASE_KEYSTORE: ../release.keystore
@@ -44,15 +48,37 @@ jobs:
           RELEASE_KEY_ALIAS: ${{ secrets.ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
 
+      - name: Rename APK
+        # Finds the generic APK and renames it to include "pametno-vozilo" and the tag/build info
+        run: |
+          APP_NAME="pametno-vozilo"
+          TAG_NAME=${{ github.ref_name }}
+          RUN_NUM=${{ github.run_number }}
+          
+          # Find the generated APK
+          APK_PATH=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          
+          # Construct the new filename (e.g., pametno-vozilo-v1.0-b1.apk)
+          NEW_APK_NAME="${APP_NAME}-${TAG_NAME}-b${RUN_NUM}.apk"
+          NEW_APK_DIR=$(dirname "$APK_PATH")
+          NEW_APK_FULL_PATH="${NEW_APK_DIR}/${NEW_APK_NAME}"
+          
+          # Rename the file physically
+          mv "$APK_PATH" "$NEW_APK_FULL_PATH"
+          
+          # Save the new path to an environment variable for the upload steps
+          echo "FINAL_APK_PATH=${NEW_APK_FULL_PATH}" >> $GITHUB_ENV
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         # Only runs if a tag was pushed or manually triggered
         if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         with:
-          files: app/build/outputs/apk/release/*.apk
+          files: ${{ env.FINAL_APK_PATH }}
           generate_release_notes: true
           # Uses the tag name (v1.0) or the branch name if manual
           tag_name: ${{ github.ref_name }}
+          name: "Pametno Vozilo ${{ github.ref_name }}"
           draft: false
           prerelease: false
         env:
@@ -62,5 +88,5 @@ jobs:
         # This keeps a copy in the Actions tab just in case
         uses: actions/upload-artifact@v4
         with:
-          name: VOZILO-Signed-APK
-          path: app/build/outputs/apk/release/*.apk
+          name: Pametno-Vozilo-Signed-APK
+          path: ${{ env.FINAL_APK_PATH }}
