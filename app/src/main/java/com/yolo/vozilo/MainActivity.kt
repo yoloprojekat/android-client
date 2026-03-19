@@ -478,60 +478,87 @@ class MainActivity : ComponentActivity() {
     fun BoxScope.DPadBtn(label: String, btnAlign: Alignment, size: androidx.compose.ui.unit.Dp, cmd: String, onStart: (String) -> Unit, onStop: () -> Unit) {
         var isPressed by remember { mutableStateOf(false) }
         val currentColorScheme = MaterialTheme.colorScheme
+        var wasPressed by remember { mutableStateOf(false) }
 
         LaunchedEffect(isPressed) {
             if (isPressed) {
-                while (true) {
+                wasPressed = true
+                while (isActive) {
                     onStart(cmd)
-                    delay(500)
+                    delay(400) // Reduced to safely beat the server's 2.0s Watchdog
                 }
+            } else if (wasPressed) {
+                wasPressed = false
+                onStop()
             }
         }
 
         Surface(
-            modifier = Modifier.size(size).align(btnAlign).pointerInput(Unit) {
-                detectTapGestures(onPress = {
-                    try {
+            modifier = Modifier
+                .size(size)
+                .align(btnAlign)
+                .pointerInput(Unit) {
+                    // awaitEachGesture waits for raw down events and blocks drag-cancels
+                    awaitEachGesture {
+                        awaitFirstDown()
                         isPressed = true
-                        awaitRelease()
-                    } finally {
+                        do {
+                            val event = awaitPointerEvent()
+                        } while (event.changes.any { it.pressed })
                         isPressed = false
-                        onStop()
                     }
-                })
-            },
-            shape = RoundedCornerShape(16.dp), color = if (isPressed) ThemeBlue else currentColorScheme.surface, border = BorderStroke(1.dp, ThemeBlue.copy(0.1f))
-        ) { Box(contentAlignment = Alignment.Center) { Text(label, fontSize = 24.sp, color = if (isPressed) Color.White else ThemeBlue) } }
+                },
+            shape = RoundedCornerShape(16.dp),
+            color = if (isPressed) ThemeBlue else currentColorScheme.surface,
+            border = BorderStroke(1.dp, ThemeBlue.copy(0.1f))
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(label, fontSize = 24.sp, color = if (isPressed) Color.White else ThemeBlue)
+            }
+        }
     }
 
     @Composable
     fun BoxScope.RotationBtn(icon: ImageVector, btnAlign: Alignment, cmd: String, onStart: (String) -> Unit, onStop: () -> Unit) {
         var isPressed by remember { mutableStateOf(false) }
         val currentColorScheme = MaterialTheme.colorScheme
+        var wasPressed by remember { mutableStateOf(false) }
 
         LaunchedEffect(isPressed) {
             if (isPressed) {
-                while (true) {
+                wasPressed = true
+                while (isActive) {
                     onStart(cmd)
-                    delay(500)
+                    delay(400)
                 }
+            } else if (wasPressed) {
+                wasPressed = false
+                onStop()
             }
         }
 
         Surface(
-            modifier = Modifier.size(56.dp).align(btnAlign).pointerInput(Unit) {
-                detectTapGestures(onPress = {
-                    try {
+            modifier = Modifier
+                .size(56.dp)
+                .align(btnAlign)
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown()
                         isPressed = true
-                        awaitRelease()
-                    } finally {
+                        do {
+                            val event = awaitPointerEvent()
+                        } while (event.changes.any { it.pressed })
                         isPressed = false
-                        onStop()
                     }
-                })
-            },
-            shape = CircleShape, color = if (isPressed) ThemeBlue else currentColorScheme.surface, border = BorderStroke(1.dp, ThemeBlue.copy(0.2f))
-        ) { Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(28.dp), if (isPressed) Color.White else ThemeBlue) } }
+                },
+            shape = CircleShape,
+            color = if (isPressed) ThemeBlue else currentColorScheme.surface,
+            border = BorderStroke(1.dp, ThemeBlue.copy(0.2f))
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(icon, null, Modifier.size(28.dp), if (isPressed) Color.White else ThemeBlue)
+            }
+        }
     }
 
     @Composable
@@ -544,9 +571,9 @@ class MainActivity : ComponentActivity() {
 
         LaunchedEffect(activeCmd) {
             activeCmd?.let { cmd ->
-                while (true) {
+                while (isActive) {
                     onCmd(cmd)
-                    delay(500)
+                    delay(400)
                 }
             }
         }
