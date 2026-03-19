@@ -7,6 +7,7 @@ android {
     namespace = "com.yolo.vozilo"
     compileSdk = 36
 
+
     defaultConfig {
         applicationId = "com.yolo.vozilo"
         minSdk = 24
@@ -94,4 +95,8 @@ dependencies {
     implementation("com.google.mlkit:object-detection-custom:17.0.2")
 // TensorFlow Lite GPU delegate (Required for float16 performance)
     implementation("org.tensorflow:tensorflow-lite-gpu:2.17.0")
+
+    implementation("org.tensorflow:tensorflow-lite-task-vision:0.4.4")
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
+// For GPU acceleration
 }
