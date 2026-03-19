@@ -1,106 +1,44 @@
 package com.yolo.vozilo
 
 import android.annotation.SuppressLint
-import android.app.Activity
 import android.content.ContentValues
 import android.content.Context
-import android.content.ContextWrapper
-import android.graphics.Bitmap
-import android.graphics.Canvas
-import android.graphics.Paint
-import android.graphics.Rect
-import android.graphics.Typeface
-import android.media.MediaCodec
-import android.media.MediaCodecInfo
-import android.media.MediaFormat
-import android.media.MediaMuxer
-import android.os.Build
-import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
+import android.graphics.*
+import android.media.*
+import android.os.*
 import android.provider.MediaStore
 import android.util.Log
-import android.view.PixelCopy
-import android.view.View
-import android.view.Window
-import android.webkit.WebSettings
-import android.webkit.WebView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.animation.*
+import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.*
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.DirectionsRun
-import androidx.compose.material.icons.automirrored.filled.RotateLeft
-import androidx.compose.material.icons.automirrored.filled.RotateRight
-import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.FiberManualRecord
-import androidx.compose.material.icons.filled.SmartButton
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.TextFields
-import androidx.compose.material.icons.filled.TrackChanges
-import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material.icons.filled.VideocamOff
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.Text
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.automirrored.filled.*
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.graphics.createBitmap
 import androidx.core.graphics.scale
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.objects.DetectedObject
@@ -108,18 +46,12 @@ import com.google.mlkit.vision.objects.ObjectDetection
 import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.*
+import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 import kotlin.math.atan2
 import kotlin.math.sqrt
@@ -138,16 +70,12 @@ fun VoziloTheme(darkTheme: Boolean = isSystemInDarkTheme(), content: @Composable
     MaterialTheme(colorScheme = colorScheme, content = content)
 }
 
-// Helper to get Activity Window for PixelCopy
-private fun Context.findActivityWindow(): Window? = when (this) {
-    is Activity -> window
-    is ContextWrapper -> baseContext.findActivityWindow()
-    else -> null
-}
-
 class MainActivity : ComponentActivity() {
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private val httpClient = OkHttpClient()
+
+    // --- HTTP Networking ---
+    private var streamJob: Job? = null
 
     // --- ML Kit ---
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
@@ -166,12 +94,11 @@ class MainActivity : ComponentActivity() {
     private var isYoloActive by mutableStateOf(false)
     private var isFollowActive by mutableStateOf(false)
     private var detectedObjects by mutableStateOf<List<DetectedObject>>(emptyList())
-
-    // View References for hardware extraction
-    private var webViewRef: WebView? = null
+    private var currentFrame by mutableStateOf<Bitmap?>(null)
 
     private var isRecording by mutableStateOf(false)
     private val recordedFrames = mutableListOf<Bitmap>()
+    private var lastFrameProcessTime = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -179,26 +106,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             VoziloTheme {
                 val context = LocalContext.current
-                val window = context.findActivityWindow()
                 val currentColorScheme = MaterialTheme.colorScheme
-
-                // --- Hardware Accelerated Frame Grabber Loop ---
-                LaunchedEffect(isCamOn, isYoloActive, isOcrRunning, isRecording) {
-                    if (!isCamOn) return@LaunchedEffect
-                    while (isActive) {
-                        if (isYoloActive || isOcrRunning || isRecording) {
-                            webViewRef?.let { view ->
-                                window?.let { win ->
-                                    grabHardwareFrame(win, view) { bitmap ->
-                                        if (bitmap != null) processFrame(bitmap)
-                                    }
-                                }
-                            }
-                        }
-                        // Dynamic throttling: Fast for video, slow for ML battery savings
-                        delay(if (isRecording) 33 else 100)
-                    }
-                }
 
                 LaunchedEffect(ocrResultText, isOcrAutoPilot) {
                     if (isOcrAutoPilot && ocrResultText.isNotBlank()) {
@@ -227,7 +135,7 @@ class MainActivity : ComponentActivity() {
                 LaunchedEffect(isFollowActive, detectedObjects) {
                     if (isFollowActive && isYoloActive && detectedObjects.isNotEmpty()) {
                         val obj = detectedObjects.first()
-                        val frameWidth = webViewRef?.width ?: 640
+                        val frameWidth = currentFrame?.width ?: 640
                         val centerX = obj.boundingBox.centerX()
                         val normalizedX = centerX.toFloat() / frameWidth
 
@@ -242,30 +150,25 @@ class MainActivity : ComponentActivity() {
                 }
 
                 LaunchedEffect(isCamOn) {
-                    if (!isCamOn) {
-                        connected = false
+                    if (isCamOn) {
+                        startHttpStream()
+                    } else {
+                        stopHttpStream()
+                        currentFrame = null
                         isRecording = false
                         isFollowActive = false
                         isOcrAutoPilot = false
                         detectedObjects = emptyList()
                         ocrResultText = ""
-                    } else {
-                        connected = true
                     }
                 }
 
                 Surface(modifier = Modifier.fillMaxSize(), color = currentColorScheme.background) {
                     Column(Modifier.padding(30.dp)) {
                         HeaderSection(connected, isCamOn, onToggleCam = { isCamOn = !isCamOn }, onCapture = {
-                            window?.let { win ->
-                                webViewRef?.let { view ->
-                                    grabHardwareFrame(win, view) { bitmap ->
-                                        bitmap?.let {
-                                            saveToGallery(it, "PI_CAP_${System.currentTimeMillis()}.jpg")
-                                            Toast.makeText(context, "Photo Saved!", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                }
+                            currentFrame?.let {
+                                saveToGallery(it, "PI_CAP_${System.currentTimeMillis()}.jpg")
+                                Toast.makeText(context, "Photo Saved!", Toast.LENGTH_SHORT).show()
                             }
                         })
 
@@ -274,8 +177,7 @@ class MainActivity : ComponentActivity() {
                         VideoSectionLive(
                             isOn = isCamOn, ocrOverlay = ocrResultText, objects = detectedObjects,
                             isOcrRunning = isOcrRunning, isOcrAutoPilot = isOcrAutoPilot,
-                            isFollowActive = isFollowActive,
-                            onWebViewCreated = { view -> webViewRef = view }
+                            isFollowActive = isFollowActive, frame = currentFrame
                         )
 
                         AnimatedVisibility(visible = isCamOn, enter = fadeIn() + expandVertically()) {
@@ -390,117 +292,130 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun grabHardwareFrame(window: Window, view: View, onBitmapReady: (Bitmap?) -> Unit) {
-        if (view.width <= 0 || view.height <= 0) {
-            onBitmapReady(null)
-            return
-        }
-
-        val bitmap = createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
-        val location = IntArray(2)
-        view.getLocationInWindow(location)
-        val rect = Rect(
-            location[0],
-            location[1],
-            location[0] + view.width,
-            location[1] + view.height
-        )
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            PixelCopy.request(
-                window,
-                rect,
-                bitmap,
-                { copyResult ->
-                    if (copyResult == PixelCopy.SUCCESS) {
-                        onBitmapReady(bitmap)
-                    } else {
-                        onBitmapReady(null)
+    private fun startHttpStream() {
+        streamJob?.cancel()
+        streamJob = scope.launch(Dispatchers.IO) {
+            try {
+                val request = Request.Builder().url("http://pametno-vozilo.local:1607/video_feed").build()
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        connected = false
+                        return@launch
                     }
-                },
-                Handler(Looper.getMainLooper())
-            )
-        } else {
-            val canvas = Canvas(bitmap)
-            view.draw(canvas)
-            onBitmapReady(bitmap)
+                    connected = true
+                    val inputStream = response.body.byteStream()
+
+                    val buffer = ByteArray(8192)
+                    var bytesRead: Int
+                    val streamBuffer = ByteArrayOutputStream()
+
+                    while (isActive) {
+                        bytesRead = inputStream.read(buffer)
+                        if (bytesRead == -1) break
+
+                        streamBuffer.write(buffer, 0, bytesRead)
+                        val data = streamBuffer.toByteArray()
+
+                        val startIndex = findJpegStart(data)
+                        val endIndex = findJpegEnd(data, startIndex)
+
+                        if (startIndex != -1 && endIndex != -1) {
+                            val jpegData = data.copyOfRange(startIndex, endIndex + 2)
+                            val bitmap = BitmapFactory.decodeByteArray(jpegData, 0, jpegData.size)
+
+                            if (bitmap != null) {
+                                processFrame(bitmap)
+                            }
+
+                            val remainingData = data.copyOfRange(endIndex + 2, data.size)
+                            streamBuffer.reset()
+                            streamBuffer.write(remainingData)
+                        } else if (streamBuffer.size() > 5 * 1024 * 1024) {
+                            streamBuffer.reset()
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("HTTP_STREAM", "Stream error", e)
+                connected = false
+            }
         }
     }
 
+    private fun findJpegStart(data: ByteArray): Int {
+        for (i in 0 until data.size - 1) {
+            if (data[i] == 0xFF.toByte() && data[i + 1] == 0xD8.toByte()) return i
+        }
+        return -1
+    }
+
+    private fun findJpegEnd(data: ByteArray, startIndex: Int): Int {
+        if (startIndex == -1) return -1
+        for (i in startIndex until data.size - 1) {
+            if (data[i] == 0xFF.toByte() && data[i + 1] == 0xD9.toByte()) return i
+        }
+        return -1
+    }
+
+    private fun stopHttpStream() {
+        streamJob?.cancel()
+        streamJob = null
+        connected = false
+    }
+
     private fun processFrame(bitmap: Bitmap) {
-        if (isRecording) {
-            synchronized(recordedFrames) { recordedFrames.add(bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)) }
-        }
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastFrameProcessTime < 66) return
+        lastFrameProcessTime = currentTime
 
-        val inputImage = InputImage.fromBitmap(bitmap, 0)
+        scope.launch(Dispatchers.Main) {
+            currentFrame = bitmap
 
-        if (isOcrRunning) {
-            recognizer.process(inputImage).addOnSuccessListener { visionText ->
-                val detected = visionText.text.lines().firstOrNull { it.isNotBlank() } ?: ""
-                if (detected != ocrResultText) ocrResultText = detected
+            if (isRecording) {
+                synchronized(recordedFrames) { recordedFrames.add(bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)) }
             }
-        }
 
-        if (isYoloActive) {
-            objectDetector.process(inputImage).addOnSuccessListener { objects -> detectedObjects = objects }
+            val inputImage = InputImage.fromBitmap(bitmap, 0)
+            if (isOcrRunning) {
+                recognizer.process(inputImage).addOnSuccessListener { visionText ->
+                    val detected = visionText.text.lines().firstOrNull { it.isNotBlank() } ?: ""
+                    if (detected != ocrResultText) ocrResultText = detected
+                }
+            }
+
+            if (isYoloActive) {
+                objectDetector.process(inputImage).addOnSuccessListener { objects -> detectedObjects = objects }
+            }
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        stopHttpStream()
         recognizer.close()
         objectDetector.close()
         scope.cancel()
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
     @Composable
-    fun VideoSectionLive(
-        isOn: Boolean,
-        ocrOverlay: String,
-        objects: List<DetectedObject>,
-        isOcrRunning: Boolean,
-        isOcrAutoPilot: Boolean,
-        isFollowActive: Boolean,
-        onWebViewCreated: (WebView) -> Unit
-    ) {
+    fun VideoSectionLive(isOn: Boolean, ocrOverlay: String, objects: List<DetectedObject>, isOcrRunning: Boolean, isOcrAutoPilot: Boolean, isFollowActive: Boolean, frame: Bitmap?) {
         val textPaint = remember { Paint().apply { textSize = 38f; typeface = Typeface.DEFAULT_BOLD; setShadowLayer(3f, 2f, 2f, android.graphics.Color.BLACK) } }
 
         Card(modifier = Modifier.fillMaxWidth().height(220.dp), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, ThemeBlue.copy(0.1f)), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Box(Modifier.fillMaxSize().background(Color.Black), Alignment.Center) {
-                if (isOn) {
-                    AndroidView(
-                        factory = { ctx ->
-                            WebView(ctx).apply {
-                                onWebViewCreated(this)
-                                settings.apply {
-                                    javaScriptEnabled = true
-                                    loadWithOverviewMode = true
-                                    useWideViewPort = true
-                                    cacheMode = WebSettings.LOAD_NO_CACHE
-                                    // FIX 1: Allow HTTP inside the WebView
-                                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                                }
-                                setLayerType(View.LAYER_TYPE_HARDWARE, null)
-                                setBackgroundColor(android.graphics.Color.BLACK)
-                            }
-                        },
-                        update = { webView ->
-                            if (webView.url == null || webView.url == "about:blank") {
-                                val html = "<html><body style='margin:0;padding:0;background-color:black;'><img src='http://pametno-vozilo.local:1607/video_feed' width='100%' height='100%' style='object-fit:fill;' /></body></html>"
-                                webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
+                if (isOn && frame != null) {
+                    Image(bitmap = frame.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
 
                     Canvas(Modifier.fillMaxSize()) {
+                        val scaleX = size.width / frame.width
+                        val scaleY = size.height / frame.height
+
                         objects.forEach { obj ->
                             val box = obj.boundingBox
                             val rectColor = if(isFollowActive) ThemeSuccess else Color.Yellow
-                            drawRect(color = rectColor, topLeft = Offset(box.left.toFloat(), box.top.toFloat()), size = Size(box.width().toFloat(), box.height().toFloat()), style = Stroke(width = 2.dp.toPx()))
+                            drawRect(color = rectColor, topLeft = Offset(box.left * scaleX, box.top * scaleY), size = Size(box.width() * scaleX, box.height() * scaleY), style = Stroke(width = 2.dp.toPx()))
                             obj.labels.firstOrNull { it.confidence > 0.4f }?.let { label ->
-                                drawContext.canvas.nativeCanvas.drawText("${label.text.uppercase()} ${(label.confidence * 100).toInt()}%", box.left.toFloat(), box.top.toFloat() - 15f, textPaint.apply { color = rectColor.toArgb() })
+                                drawContext.canvas.nativeCanvas.drawText("${label.text.uppercase()} ${(label.confidence * 100).toInt()}%", box.left * scaleX, (box.top * scaleY) - 15, textPaint.apply { color = rectColor.toArgb() })
                             }
                         }
                     }
@@ -559,7 +474,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // FIX 2: Replaced detectTapGestures with awaitEachGesture for reliable continuous pressing
     @Composable
     fun BoxScope.DPadBtn(label: String, btnAlign: Alignment, size: androidx.compose.ui.unit.Dp, cmd: String, onStart: (String) -> Unit, onStop: () -> Unit) {
         var isPressed by remember { mutableStateOf(false) }
@@ -575,23 +489,21 @@ class MainActivity : ComponentActivity() {
         }
 
         Surface(
-            modifier = Modifier
-                .size(size)
-                .align(btnAlign)
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        awaitFirstDown()
+            modifier = Modifier.size(size).align(btnAlign).pointerInput(Unit) {
+                detectTapGestures(onPress = {
+                    try {
                         isPressed = true
-                        waitForUpOrCancellation()
+                        awaitRelease()
+                    } finally {
                         isPressed = false
                         onStop()
                     }
-                },
+                })
+            },
             shape = RoundedCornerShape(16.dp), color = if (isPressed) ThemeBlue else currentColorScheme.surface, border = BorderStroke(1.dp, ThemeBlue.copy(0.1f))
         ) { Box(contentAlignment = Alignment.Center) { Text(label, fontSize = 24.sp, color = if (isPressed) Color.White else ThemeBlue) } }
     }
 
-    // FIX 3: Same touch fix applied here
     @Composable
     fun BoxScope.RotationBtn(icon: ImageVector, btnAlign: Alignment, cmd: String, onStart: (String) -> Unit, onStop: () -> Unit) {
         var isPressed by remember { mutableStateOf(false) }
@@ -607,18 +519,17 @@ class MainActivity : ComponentActivity() {
         }
 
         Surface(
-            modifier = Modifier
-                .size(56.dp)
-                .align(btnAlign)
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        awaitFirstDown()
+            modifier = Modifier.size(56.dp).align(btnAlign).pointerInput(Unit) {
+                detectTapGestures(onPress = {
+                    try {
                         isPressed = true
-                        waitForUpOrCancellation()
+                        awaitRelease()
+                    } finally {
                         isPressed = false
                         onStop()
                     }
-                },
+                })
+            },
             shape = CircleShape, color = if (isPressed) ThemeBlue else currentColorScheme.surface, border = BorderStroke(1.dp, ThemeBlue.copy(0.2f))
         ) { Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(28.dp), if (isPressed) Color.White else ThemeBlue) } }
     }
