@@ -35,8 +35,10 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -181,7 +183,6 @@ class MainActivity : ComponentActivity() {
                 val currentColorScheme = MaterialTheme.colorScheme
 
                 // --- Hardware Accelerated Frame Grabber Loop ---
-                // This wakes up ONLY when ML Kit or Recording needs frames, saving massive battery.
                 LaunchedEffect(isCamOn, isYoloActive, isOcrRunning, isRecording) {
                     if (!isCamOn) return@LaunchedEffect
                     while (isActive) {
@@ -249,7 +250,6 @@ class MainActivity : ComponentActivity() {
                         detectedObjects = emptyList()
                         ocrResultText = ""
                     } else {
-                        // Optimistically assume connected when Webview starts
                         connected = true
                     }
                 }
@@ -257,7 +257,6 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize(), color = currentColorScheme.background) {
                     Column(Modifier.padding(30.dp)) {
                         HeaderSection(connected, isCamOn, onToggleCam = { isCamOn = !isCamOn }, onCapture = {
-                            // On-Demand hardware frame grab for photo capture
                             window?.let { win ->
                                 webViewRef?.let { view ->
                                     grabHardwareFrame(win, view) { bitmap ->
@@ -391,17 +390,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Fixed High-Efficiency Hardware Pixel Extractor
     private fun grabHardwareFrame(window: Window, view: View, onBitmapReady: (Bitmap?) -> Unit) {
         if (view.width <= 0 || view.height <= 0) {
             onBitmapReady(null)
             return
         }
 
-        // Fix #3: Use KTX createBitmap
         val bitmap = createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
-
-        // Fix #1: Calculate the exact Rect of the View on the screen
         val location = IntArray(2)
         view.getLocationInWindow(location)
         val rect = Rect(
@@ -412,7 +407,6 @@ class MainActivity : ComponentActivity() {
         )
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // Fix #2: Explicitly define the interface listener to avoid type inference issues
             PixelCopy.request(
                 window,
                 rect,
@@ -427,7 +421,6 @@ class MainActivity : ComponentActivity() {
                 Handler(Looper.getMainLooper())
             )
         } else {
-            // Fallback for older Android devices
             val canvas = Canvas(bitmap)
             view.draw(canvas)
             onBitmapReady(bitmap)
@@ -460,7 +453,7 @@ class MainActivity : ComponentActivity() {
         scope.cancel()
     }
 
-    @SuppressLint("SetJavaScriptEnabled") // Fix #4: Suppress XSS warning (we only load local HTML)
+    @SuppressLint("SetJavaScriptEnabled")
     @Composable
     fun VideoSectionLive(
         isOn: Boolean,
@@ -476,7 +469,6 @@ class MainActivity : ComponentActivity() {
         Card(modifier = Modifier.fillMaxWidth().height(220.dp), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, ThemeBlue.copy(0.1f)), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Box(Modifier.fillMaxSize().background(Color.Black), Alignment.Center) {
                 if (isOn) {
-                    // Hardware Accelerated Video Renderer
                     AndroidView(
                         factory = { ctx ->
                             WebView(ctx).apply {
@@ -485,16 +477,16 @@ class MainActivity : ComponentActivity() {
                                     javaScriptEnabled = true
                                     loadWithOverviewMode = true
                                     useWideViewPort = true
-                                    cacheMode = WebSettings.LOAD_NO_CACHE // Force fresh frames
+                                    cacheMode = WebSettings.LOAD_NO_CACHE
+                                    // FIX 1: Allow HTTP inside the WebView
+                                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                                 }
-                                // Force GPU rendering for stream
                                 setLayerType(View.LAYER_TYPE_HARDWARE, null)
                                 setBackgroundColor(android.graphics.Color.BLACK)
                             }
                         },
                         update = { webView ->
                             if (webView.url == null || webView.url == "about:blank") {
-                                // Natively fit the MJPEG stream to the Viewport using HTML
                                 val html = "<html><body style='margin:0;padding:0;background-color:black;'><img src='http://pametno-vozilo.local:1607/video_feed' width='100%' height='100%' style='object-fit:fill;' /></body></html>"
                                 webView.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
                             }
@@ -502,12 +494,10 @@ class MainActivity : ComponentActivity() {
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    // Overlay Canvas (YOLO & OCR)
                     Canvas(Modifier.fillMaxSize()) {
                         objects.forEach { obj ->
                             val box = obj.boundingBox
                             val rectColor = if(isFollowActive) ThemeSuccess else Color.Yellow
-                            // Since PixelCopy grabs the exact view dimensions, scale is perfectly 1.0!
                             drawRect(color = rectColor, topLeft = Offset(box.left.toFloat(), box.top.toFloat()), size = Size(box.width().toFloat(), box.height().toFloat()), style = Stroke(width = 2.dp.toPx()))
                             obj.labels.firstOrNull { it.confidence > 0.4f }?.let { label ->
                                 drawContext.canvas.nativeCanvas.drawText("${label.text.uppercase()} ${(label.confidence * 100).toInt()}%", box.left.toFloat(), box.top.toFloat() - 15f, textPaint.apply { color = rectColor.toArgb() })
@@ -569,6 +559,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // FIX 2: Replaced detectTapGestures with awaitEachGesture for reliable continuous pressing
     @Composable
     fun BoxScope.DPadBtn(label: String, btnAlign: Alignment, size: androidx.compose.ui.unit.Dp, cmd: String, onStart: (String) -> Unit, onStop: () -> Unit) {
         var isPressed by remember { mutableStateOf(false) }
@@ -584,21 +575,23 @@ class MainActivity : ComponentActivity() {
         }
 
         Surface(
-            modifier = Modifier.size(size).align(btnAlign).pointerInput(Unit) {
-                detectTapGestures(onPress = {
-                    try {
+            modifier = Modifier
+                .size(size)
+                .align(btnAlign)
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown()
                         isPressed = true
-                        awaitRelease()
-                    } finally {
+                        waitForUpOrCancellation()
                         isPressed = false
                         onStop()
                     }
-                })
-            },
+                },
             shape = RoundedCornerShape(16.dp), color = if (isPressed) ThemeBlue else currentColorScheme.surface, border = BorderStroke(1.dp, ThemeBlue.copy(0.1f))
         ) { Box(contentAlignment = Alignment.Center) { Text(label, fontSize = 24.sp, color = if (isPressed) Color.White else ThemeBlue) } }
     }
 
+    // FIX 3: Same touch fix applied here
     @Composable
     fun BoxScope.RotationBtn(icon: ImageVector, btnAlign: Alignment, cmd: String, onStart: (String) -> Unit, onStop: () -> Unit) {
         var isPressed by remember { mutableStateOf(false) }
@@ -614,17 +607,18 @@ class MainActivity : ComponentActivity() {
         }
 
         Surface(
-            modifier = Modifier.size(56.dp).align(btnAlign).pointerInput(Unit) {
-                detectTapGestures(onPress = {
-                    try {
+            modifier = Modifier
+                .size(56.dp)
+                .align(btnAlign)
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown()
                         isPressed = true
-                        awaitRelease()
-                    } finally {
+                        waitForUpOrCancellation()
                         isPressed = false
                         onStop()
                     }
-                })
-            },
+                },
             shape = CircleShape, color = if (isPressed) ThemeBlue else currentColorScheme.surface, border = BorderStroke(1.dp, ThemeBlue.copy(0.2f))
         ) { Box(contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(28.dp), if (isPressed) Color.White else ThemeBlue) } }
     }
