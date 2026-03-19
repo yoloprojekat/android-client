@@ -460,7 +460,7 @@ class MainActivity : ComponentActivity() {
                             val rectColor = if(isFollowActive) ThemeSuccess else Color.Yellow
                             drawRect(color = rectColor, topLeft = Offset(box.left * scaleX, box.top * scaleY), size = Size(box.width() * scaleX, box.height() * scaleY), style = Stroke(width = 2.dp.toPx()))
 
-                            // This part successfully draws the name and percentage using your Custom Model data!
+                            // Draws the name and percentage using your Custom Model data
                             obj.labels.firstOrNull { it.confidence > 0.4f }?.let { label ->
                                 drawContext.canvas.nativeCanvas.drawText("${label.text.uppercase()} ${(label.confidence * 100).toInt()}%", box.left * scaleX, (box.top * scaleY) - 15, textPaint.apply { color = rectColor.toArgb() })
                             }
@@ -521,6 +521,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // --- UPDATED: Highly reliable hold-to-move, release-to-stop logic ---
     @Composable
     fun BoxScope.DPadBtn(label: String, btnAlign: Alignment, size: androidx.compose.ui.unit.Dp, targetCmd: String, currentCmd: String, onCmdChange: (String) -> Unit) {
         val currentColorScheme = MaterialTheme.colorScheme
@@ -533,14 +534,18 @@ class MainActivity : ComponentActivity() {
                 .pointerInput(Unit) {
                     awaitPointerEventScope {
                         while (true) {
-                            val event = awaitPointerEvent()
-                            val isTouchDown = event.changes.any { it.pressed }
+                            // Wait for the user to physically touch the screen
+                            awaitFirstDown(requireUnconsumed = false)
+                            onCmdChange(targetCmd)
 
-                            if (isTouchDown && !isPressed) {
-                                onCmdChange(targetCmd)
-                            } else if (!isTouchDown && isPressed) {
-                                onCmdChange("stop")
-                            }
+                            // Keep checking the touch event.
+                            // Loop continues as long as a finger is pressed on the screen
+                            do {
+                                val event = awaitPointerEvent()
+                            } while (event.changes.any { it.pressed })
+
+                            // The exact moment the finger is lifted, send stop
+                            onCmdChange("stop")
                         }
                     }
                 },
@@ -554,6 +559,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // --- UPDATED: Highly reliable hold-to-move, release-to-stop logic ---
     @Composable
     fun BoxScope.RotationBtn(icon: ImageVector, btnAlign: Alignment, targetCmd: String, currentCmd: String, onCmdChange: (String) -> Unit) {
         val currentColorScheme = MaterialTheme.colorScheme
@@ -566,14 +572,17 @@ class MainActivity : ComponentActivity() {
                 .pointerInput(Unit) {
                     awaitPointerEventScope {
                         while (true) {
-                            val event = awaitPointerEvent()
-                            val isTouchDown = event.changes.any { it.pressed }
+                            // Wait for the user to physically touch the screen
+                            awaitFirstDown(requireUnconsumed = false)
+                            onCmdChange(targetCmd)
 
-                            if (isTouchDown && !isPressed) {
-                                onCmdChange(targetCmd)
-                            } else if (!isTouchDown && isPressed) {
-                                onCmdChange("stop")
-                            }
+                            // Loop continues as long as a finger is pressed
+                            do {
+                                val event = awaitPointerEvent()
+                            } while (event.changes.any { it.pressed })
+
+                            // The exact moment the finger is lifted, send stop
+                            onCmdChange("stop")
                         }
                     }
                 },
