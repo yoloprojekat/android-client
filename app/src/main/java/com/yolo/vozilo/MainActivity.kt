@@ -77,6 +77,10 @@ class MainActivity : ComponentActivity() {
     // --- HTTP Networking ---
     private var streamJob: Job? = null
 
+    // --- Command State ---
+    // This is the SINGLE source of truth for movement
+    private var currentCommand by mutableStateOf("stop")
+
     // --- ML Kit ---
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     private val objectDetector = ObjectDetection.getClient(
@@ -103,6 +107,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Start the background network loop
+        startCommandLoop()
+
         setContent {
             VoziloTheme {
                 val context = LocalContext.current
@@ -122,9 +129,9 @@ class MainActivity : ComponentActivity() {
 
                         if (cmd != null) {
                             isOcrAutoPilot = false
-                            sendCommand(cmd)
+                            currentCommand = cmd
                             delay(1500)
-                            sendCommand("stop")
+                            currentCommand = "stop"
                             delay(500)
                             ocrResultText = ""
                             isOcrAutoPilot = true
@@ -139,13 +146,13 @@ class MainActivity : ComponentActivity() {
                         val centerX = obj.boundingBox.centerX()
                         val normalizedX = centerX.toFloat() / frameWidth
 
-                        when {
-                            normalizedX < 0.35f -> sendCommand("levo")
-                            normalizedX > 0.65f -> sendCommand("desno")
-                            else -> sendCommand("napred")
+                        currentCommand = when {
+                            normalizedX < 0.35f -> "levo"
+                            normalizedX > 0.65f -> "desno"
+                            else -> "napred"
                         }
                     } else if (isFollowActive && (detectedObjects.isEmpty() || !isYoloActive)) {
-                        sendCommand("stop")
+                        currentCommand = "stop"
                     }
                 }
 
@@ -231,7 +238,7 @@ class MainActivity : ComponentActivity() {
                                             backgroundColor = if (isFollowActive) ThemeSuccess else Color.Gray
                                         ) {
                                             isFollowActive = !isFollowActive
-                                            if (!isFollowActive) sendCommand("stop")
+                                            if (!isFollowActive) currentCommand = "stop"
                                         }
                                     }
 
@@ -243,7 +250,7 @@ class MainActivity : ComponentActivity() {
                                             backgroundColor = if (isOcrAutoPilot) ThemeSuccess else Color.Gray
                                         ) {
                                             isOcrAutoPilot = !isOcrAutoPilot
-                                            if (!isOcrAutoPilot) sendCommand("stop")
+                                            if (!isOcrAutoPilot) currentCommand = "stop"
                                         }
                                     }
                                 }
@@ -260,9 +267,15 @@ class MainActivity : ComponentActivity() {
 
                         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                             if (useJoystick) {
-                                CircularJoystick { sendCommand(it) }
+                                CircularJoystick(
+                                    currentCmd = currentCommand,
+                                    onCmdChange = { currentCommand = it }
+                                )
                             } else {
-                                CompactDPad(onStart = { sendCommand(it) }, onStop = { sendCommand("stop") })
+                                CompactDPad(
+                                    currentCmd = currentCommand,
+                                    onCmdChange = { currentCommand = it }
+                                )
                             }
                         }
                     }
@@ -271,24 +284,45 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun sendCommand(cmd: String) {
+    private fun startCommandLoop() {
         scope.launch(Dispatchers.IO) {
-            try {
-                val json = JSONObject().apply { put("cmd", cmd) }.toString()
-                val body = json.toRequestBody("application/json".toMediaType())
-                val request = Request.Builder()
-                    .url("http://pametno-vozilo.local:1607/control")
-                    .post(body)
-                    .build()
+            var lastSentCommand = ""
+            var lastSentTime = 0L
 
-                httpClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        Log.e("HTTP_CMD", "Unexpected code $response")
-                    }
+            while (isActive) {
+                val commandToSend = currentCommand
+                val now = System.currentTimeMillis()
+
+                // Send immediately if the command CHANGED
+                // OR send a "keep-alive" every 1.5 seconds if the command is STILL the same (and not stop)
+                // This satisfies the 2.0s server watchdog without spamming the network
+                if (commandToSend != lastSentCommand || (commandToSend != "stop" && now - lastSentTime > 1500)) {
+                    sendNetworkCommand(commandToSend)
+                    lastSentCommand = commandToSend
+                    lastSentTime = now
                 }
-            } catch (e: Exception) {
-                Log.e("HTTP_CMD", "Send failed: ${e.message}")
+
+                delay(50) // Small tick delay to prevent CPU spinning
             }
+        }
+    }
+
+    private fun sendNetworkCommand(cmd: String) {
+        try {
+            val json = JSONObject().apply { put("cmd", cmd) }.toString()
+            val body = json.toRequestBody("application/json".toMediaType())
+            val request = Request.Builder()
+                .url("http://pametno-vozilo.local:1607/control")
+                .post(body)
+                .build()
+
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Log.e("HTTP_CMD", "Unexpected code $response")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("HTTP_CMD", "Send failed: ${e.message}")
         }
     }
 
@@ -462,50 +496,39 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun CompactDPad(onStart: (String) -> Unit, onStop: () -> Unit) {
+    fun CompactDPad(currentCmd: String, onCmdChange: (String) -> Unit) {
         Box(Modifier.size(240.dp)) {
             val btnSize = 65.dp
-            DPadBtn("▲", Alignment.TopCenter, btnSize, "napred", onStart, onStop)
-            DPadBtn("▼", Alignment.BottomCenter, btnSize, "nazad", onStart, onStop)
-            DPadBtn("◀", Alignment.CenterStart, btnSize, "levo", onStart, onStop)
-            DPadBtn("▶", Alignment.CenterEnd, btnSize, "desno", onStart, onStop)
-            RotationBtn(Icons.AutoMirrored.Filled.RotateLeft, Alignment.BottomStart, "rot_levo", onStart, onStop)
-            RotationBtn(Icons.AutoMirrored.Filled.RotateRight, Alignment.BottomEnd, "rot_desno", onStart, onStop)
+            DPadBtn("▲", Alignment.TopCenter, btnSize, "napred", currentCmd, onCmdChange)
+            DPadBtn("▼", Alignment.BottomCenter, btnSize, "nazad", currentCmd, onCmdChange)
+            DPadBtn("◀", Alignment.CenterStart, btnSize, "levo", currentCmd, onCmdChange)
+            DPadBtn("▶", Alignment.CenterEnd, btnSize, "desno", currentCmd, onCmdChange)
+            RotationBtn(Icons.AutoMirrored.Filled.RotateLeft, Alignment.BottomStart, "rot_levo", currentCmd, onCmdChange)
+            RotationBtn(Icons.AutoMirrored.Filled.RotateRight, Alignment.BottomEnd, "rot_desno", currentCmd, onCmdChange)
         }
     }
 
     @Composable
-    fun BoxScope.DPadBtn(label: String, btnAlign: Alignment, size: androidx.compose.ui.unit.Dp, cmd: String, onStart: (String) -> Unit, onStop: () -> Unit) {
-        var isPressed by remember { mutableStateOf(false) }
+    fun BoxScope.DPadBtn(label: String, btnAlign: Alignment, size: androidx.compose.ui.unit.Dp, targetCmd: String, currentCmd: String, onCmdChange: (String) -> Unit) {
         val currentColorScheme = MaterialTheme.colorScheme
-        var wasPressed by remember { mutableStateOf(false) }
-
-        LaunchedEffect(isPressed) {
-            if (isPressed) {
-                wasPressed = true
-                while (isActive) {
-                    onStart(cmd)
-                    delay(400) // Reduced to safely beat the server's 2.0s Watchdog
-                }
-            } else if (wasPressed) {
-                wasPressed = false
-                onStop()
-            }
-        }
+        val isPressed = currentCmd == targetCmd
 
         Surface(
             modifier = Modifier
                 .size(size)
                 .align(btnAlign)
                 .pointerInput(Unit) {
-                    // awaitEachGesture waits for raw down events and blocks drag-cancels
-                    awaitEachGesture {
-                        awaitFirstDown()
-                        isPressed = true
-                        do {
+                    awaitPointerEventScope {
+                        while (true) {
                             val event = awaitPointerEvent()
-                        } while (event.changes.any { it.pressed })
-                        isPressed = false
+                            val isTouchDown = event.changes.any { it.pressed }
+
+                            if (isTouchDown && !isPressed) {
+                                onCmdChange(targetCmd)
+                            } else if (!isTouchDown && isPressed) {
+                                onCmdChange("stop")
+                            }
+                        }
                     }
                 },
             shape = RoundedCornerShape(16.dp),
@@ -519,36 +542,26 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun BoxScope.RotationBtn(icon: ImageVector, btnAlign: Alignment, cmd: String, onStart: (String) -> Unit, onStop: () -> Unit) {
-        var isPressed by remember { mutableStateOf(false) }
+    fun BoxScope.RotationBtn(icon: ImageVector, btnAlign: Alignment, targetCmd: String, currentCmd: String, onCmdChange: (String) -> Unit) {
         val currentColorScheme = MaterialTheme.colorScheme
-        var wasPressed by remember { mutableStateOf(false) }
-
-        LaunchedEffect(isPressed) {
-            if (isPressed) {
-                wasPressed = true
-                while (isActive) {
-                    onStart(cmd)
-                    delay(400)
-                }
-            } else if (wasPressed) {
-                wasPressed = false
-                onStop()
-            }
-        }
+        val isPressed = currentCmd == targetCmd
 
         Surface(
             modifier = Modifier
                 .size(56.dp)
                 .align(btnAlign)
                 .pointerInput(Unit) {
-                    awaitEachGesture {
-                        awaitFirstDown()
-                        isPressed = true
-                        do {
+                    awaitPointerEventScope {
+                        while (true) {
                             val event = awaitPointerEvent()
-                        } while (event.changes.any { it.pressed })
-                        isPressed = false
+                            val isTouchDown = event.changes.any { it.pressed }
+
+                            if (isTouchDown && !isPressed) {
+                                onCmdChange(targetCmd)
+                            } else if (!isTouchDown && isPressed) {
+                                onCmdChange("stop")
+                            }
+                        }
                     }
                 },
             shape = CircleShape,
@@ -562,29 +575,18 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    fun CircularJoystick(onCmd: (String) -> Unit) {
+    fun CircularJoystick(currentCmd: String, onCmdChange: (String) -> Unit) {
         var offX by remember { mutableFloatStateOf(0f) }
         var offY by remember { mutableFloatStateOf(0f) }
-        var activeCmd by remember { mutableStateOf<String?>(null) }
         val radius = 100f
         val currentColorScheme = MaterialTheme.colorScheme
-
-        LaunchedEffect(activeCmd) {
-            activeCmd?.let { cmd ->
-                while (isActive) {
-                    onCmd(cmd)
-                    delay(400)
-                }
-            }
-        }
 
         Box(
             Modifier.size(200.dp).background(currentColorScheme.surface, CircleShape).border(1.dp, ThemeBlue.copy(0.1f), CircleShape)
                 .pointerInput(Unit) {
                     detectDragGestures(onDragEnd = {
                         offX = 0f; offY = 0f
-                        activeCmd = null
-                        onCmd("stop")
+                        onCmdChange("stop")
                     }) { change, drag ->
                         change.consume()
                         val nX = offX + drag.x
@@ -602,13 +604,12 @@ class MainActivity : ComponentActivity() {
                                 angle > -135 && angle <= -45 -> "napred"
                                 else -> "levo"
                             }
-                            if (activeCmd != cmd) {
-                                activeCmd = cmd
+                            if (currentCmd != cmd) {
+                                onCmdChange(cmd)
                             }
                         } else {
-                            if (activeCmd != null) {
-                                activeCmd = null
-                                onCmd("stop")
+                            if (currentCmd != "stop") {
+                                onCmdChange("stop")
                             }
                         }
                     }
