@@ -40,10 +40,11 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.scale
+import com.google.mlkit.common.model.LocalModel
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.objects.DetectedObject
 import com.google.mlkit.vision.objects.ObjectDetection
-import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
+import com.google.mlkit.vision.objects.custom.CustomObjectDetectorOptions
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.*
@@ -81,12 +82,22 @@ class MainActivity : ComponentActivity() {
     // This is the SINGLE source of truth for movement
     private var currentCommand by mutableStateOf("stop")
 
-    // --- ML Kit ---
+    // --- ML Kit OCR ---
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-    private val objectDetector = ObjectDetection.getClient(
-        ObjectDetectorOptions.Builder().setDetectorMode(ObjectDetectorOptions.SINGLE_IMAGE_MODE)
-            .enableClassification().enableMultipleObjects().build()
-    )
+
+    // --- Custom ML Kit Object Detection (YOLOv26 TFLite) ---
+    private val localModel = LocalModel.Builder()
+        .setAssetFilePath("yolo26n_float16.tflite")
+        .build()
+
+    private val customObjectDetectorOptions = CustomObjectDetectorOptions.Builder(localModel)
+        .setDetectorMode(CustomObjectDetectorOptions.SINGLE_IMAGE_MODE)
+        .enableMultipleObjects()
+        .enableClassification() // This enables reading the object names from your TFLite model
+        .setMaxPerObjectLabelCount(1)
+        .build()
+
+    private val objectDetector = ObjectDetection.getClient(customObjectDetectorOptions)
 
     // --- State ---
     private var connected by mutableStateOf(false)
@@ -448,6 +459,8 @@ class MainActivity : ComponentActivity() {
                             val box = obj.boundingBox
                             val rectColor = if(isFollowActive) ThemeSuccess else Color.Yellow
                             drawRect(color = rectColor, topLeft = Offset(box.left * scaleX, box.top * scaleY), size = Size(box.width() * scaleX, box.height() * scaleY), style = Stroke(width = 2.dp.toPx()))
+
+                            // This part successfully draws the name and percentage using your Custom Model data!
                             obj.labels.firstOrNull { it.confidence > 0.4f }?.let { label ->
                                 drawContext.canvas.nativeCanvas.drawText("${label.text.uppercase()} ${(label.confidence * 100).toInt()}%", box.left * scaleX, (box.top * scaleY) - 15, textPaint.apply { color = rectColor.toArgb() })
                             }

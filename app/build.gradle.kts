@@ -89,4 +89,9 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+
+    // ML Kit Object Detection with Custom Model support
+    implementation("com.google.mlkit:object-detection-custom:17.0.2")
+// TensorFlow Lite GPU delegate (Required for float16 performance)
+    implementation("org.tensorflow:tensorflow-lite-gpu:2.17.0")
 }
