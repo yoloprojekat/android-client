@@ -55,10 +55,6 @@ android {
 
     buildFeatures { compose = true }
 
-    androidResources {
-        noCompress += "tflite"
-    }
-
     // --- 16KB ALIGNMENT FIX ---
     packaging {
         jniLibs {
@@ -83,20 +79,8 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.text.recognition)
 
-    // AI & Vision
-    implementation(libs.object1.detection)
-    implementation(libs.object1.detection.custom)
-
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 
-    // ML Kit Object Detection with Custom Model support
-    implementation("com.google.mlkit:object-detection-custom:17.0.2")
-// TensorFlow Lite GPU delegate (Required for float16 performance)
-    implementation("org.tensorflow:tensorflow-lite-gpu:2.17.0")
-
-    implementation("org.tensorflow:tensorflow-lite-task-vision:0.4.4")
-    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")
-// For GPU acceleration
 }
