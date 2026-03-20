@@ -24,13 +24,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -40,11 +35,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.scale
-import com.google.mlkit.common.model.LocalModel
 import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.objects.DetectedObject
-import com.google.mlkit.vision.objects.ObjectDetection
-import com.google.mlkit.vision.objects.custom.CustomObjectDetectorOptions
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.*
@@ -54,6 +45,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
 import kotlin.math.atan2
 import kotlin.math.sqrt
 
@@ -79,38 +71,24 @@ class MainActivity : ComponentActivity() {
     private var streamJob: Job? = null
 
     // --- Command State ---
-    // This is the SINGLE source of truth for movement
     private var currentCommand by mutableStateOf("stop")
 
-    // --- ML Kit OCR ---
+    // --- ML Kit OCR (Kept local for Android) ---
     private val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
-    // --- Custom ML Kit Object Detection (YOLOv26 TFLite) ---
-    private val localModel = LocalModel.Builder()
-        .setAssetFilePath("yolo26n_float16.tflite")
-        .build()
-
-    private val customObjectDetectorOptions = CustomObjectDetectorOptions.Builder(localModel)
-        .setDetectorMode(CustomObjectDetectorOptions.SINGLE_IMAGE_MODE)
-        .enableMultipleObjects()
-        .enableClassification() // This enables reading the object names from your TFLite model
-        .setMaxPerObjectLabelCount(1)
-        .build()
-
-    private val objectDetector = ObjectDetection.getClient(customObjectDetectorOptions)
-
-    // --- State ---
+    // --- App State ---
     private var connected by mutableStateOf(false)
     private var isCamOn by mutableStateOf(false)
     private var useJoystick by mutableStateOf(false)
     private var ocrResultText by mutableStateOf("")
     private var isOcrRunning by mutableStateOf(false)
     private var isOcrAutoPilot by mutableStateOf(false)
-    private var isYoloActive by mutableStateOf(false)
-    private var isFollowActive by mutableStateOf(false)
-    private var detectedObjects by mutableStateOf<List<DetectedObject>>(emptyList())
-    private var currentFrame by mutableStateOf<Bitmap?>(null)
 
+    // --- New Remote AI State ---
+    private var isRemoteDetectionOn by mutableStateOf(false)
+    private var isRemoteFollowOn by mutableStateOf(false)
+
+    private var currentFrame by mutableStateOf<Bitmap?>(null)
     private var isRecording by mutableStateOf(false)
     private val recordedFrames = mutableListOf<Bitmap>()
     private var lastFrameProcessTime = 0L
@@ -118,7 +96,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Start the background network loop
+        // Start the background network loop for manual commands
         startCommandLoop()
 
         setContent {
@@ -150,23 +128,6 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                LaunchedEffect(isFollowActive, detectedObjects) {
-                    if (isFollowActive && isYoloActive && detectedObjects.isNotEmpty()) {
-                        val obj = detectedObjects.first()
-                        val frameWidth = currentFrame?.width ?: 640
-                        val centerX = obj.boundingBox.centerX()
-                        val normalizedX = centerX.toFloat() / frameWidth
-
-                        currentCommand = when {
-                            normalizedX < 0.35f -> "levo"
-                            normalizedX > 0.65f -> "desno"
-                            else -> "napred"
-                        }
-                    } else if (isFollowActive && (detectedObjects.isEmpty() || !isYoloActive)) {
-                        currentCommand = "stop"
-                    }
-                }
-
                 LaunchedEffect(isCamOn) {
                     if (isCamOn) {
                         startHttpStream()
@@ -174,10 +135,13 @@ class MainActivity : ComponentActivity() {
                         stopHttpStream()
                         currentFrame = null
                         isRecording = false
-                        isFollowActive = false
+                        isRemoteDetectionOn = false
+                        isRemoteFollowOn = false
                         isOcrAutoPilot = false
-                        detectedObjects = emptyList()
                         ocrResultText = ""
+                        // Ensure AI shuts off if stream stops
+                        togglePiAI("DETECTION", false)
+                        togglePiAI("FOLLOW", false)
                     }
                 }
 
@@ -192,21 +156,26 @@ class MainActivity : ComponentActivity() {
 
                         Spacer(Modifier.height(16.dp))
 
+                        // Video Section (No longer draws YOLO boxes, just shows stream)
                         VideoSectionLive(
-                            isOn = isCamOn, ocrOverlay = ocrResultText, objects = detectedObjects,
-                            isOcrRunning = isOcrRunning, isOcrAutoPilot = isOcrAutoPilot,
-                            isFollowActive = isFollowActive, frame = currentFrame
+                            isOn = isCamOn,
+                            ocrOverlay = ocrResultText,
+                            isOcrRunning = isOcrRunning,
+                            isOcrAutoPilot = isOcrAutoPilot,
+                            frame = currentFrame
                         )
 
                         AnimatedVisibility(visible = isCamOn, enter = fadeIn() + expandVertically()) {
                             Column {
+                                // ROW 1: VISION & RECORD
                                 Row(Modifier.fillMaxWidth().padding(top = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    FeaturePill("YOLO", Icons.Default.TrackChanges, Modifier.weight(1f), if (isYoloActive) ThemeSuccess else ThemeBlue) {
-                                        isYoloActive = !isYoloActive
-                                        if (!isYoloActive) {
-                                            detectedObjects = emptyList()
-                                            isFollowActive = false
-                                        }
+                                    FeaturePill(
+                                        label = if (isRemoteDetectionOn) "VISION ON" else "VISION OFF",
+                                        icon = Icons.Default.Visibility,
+                                        modifier = Modifier.weight(1f),
+                                        backgroundColor = if (isRemoteDetectionOn) ThemeSuccess else ThemeBlue
+                                    ) {
+                                        togglePiAI("DETECTION", !isRemoteDetectionOn)
                                     }
 
                                     FeaturePill(
@@ -240,16 +209,16 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
 
+                                // ROW 2: FOLLOW & OCR AUTO
                                 Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    if (isYoloActive) {
+                                    if (isRemoteDetectionOn) {
                                         FeaturePill(
-                                            label = if (isFollowActive) "FOLLOWING" else "FOLLOW",
+                                            label = if (isRemoteFollowOn) "FOLLOWING" else "FOLLOW",
                                             icon = Icons.AutoMirrored.Filled.DirectionsRun,
                                             modifier = Modifier.weight(1f),
-                                            backgroundColor = if (isFollowActive) ThemeSuccess else Color.Gray
+                                            backgroundColor = if (isRemoteFollowOn) ThemeSuccess else Color.Gray
                                         ) {
-                                            isFollowActive = !isFollowActive
-                                            if (!isFollowActive) currentCommand = "stop"
+                                            togglePiAI("FOLLOW", !isRemoteFollowOn)
                                         }
                                     }
 
@@ -278,21 +247,48 @@ class MainActivity : ComponentActivity() {
 
                         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                             if (useJoystick) {
-                                CircularJoystick(
-                                    currentCmd = currentCommand,
-                                    onCmdChange = { currentCommand = it }
-                                )
+                                CircularJoystick(currentCmd = currentCommand, onCmdChange = { currentCommand = it })
                             } else {
-                                CompactDPad(
-                                    currentCmd = currentCommand,
-                                    onCmdChange = { currentCommand = it }
-                                )
+                                CompactDPad(currentCmd = currentCommand, onCmdChange = { currentCommand = it })
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    // --- RPi AI Toggle Function ---
+    private fun togglePiAI(type: String, enable: Boolean) {
+        val endpoint = if (type == "DETECTION") "toggle_detection" else "toggle_follow"
+        val json = JSONObject().apply { put("enable", enable) }.toString()
+        val body = json.toRequestBody("application/json".toMediaType())
+
+        val request = Request.Builder()
+            .url("http://pametno-vozilo.local:1607/$endpoint")
+            .post(body)
+            .build()
+
+        httpClient.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                scope.launch(Dispatchers.Main) {
+                    Log.e("PI_AI", "Connection failed for $type")
+                }
+            }
+            override fun onResponse(call: Call, response: Response) {
+                if (response.isSuccessful) {
+                    scope.launch(Dispatchers.Main) {
+                        if (type == "DETECTION") {
+                            isRemoteDetectionOn = enable
+                            // If we turn vision off, force follow off for safety
+                            if (!enable && isRemoteFollowOn) togglePiAI("FOLLOW", false)
+                        } else {
+                            isRemoteFollowOn = enable
+                        }
+                    }
+                }
+            }
+        })
     }
 
     private fun startCommandLoop() {
@@ -304,16 +300,12 @@ class MainActivity : ComponentActivity() {
                 val commandToSend = currentCommand
                 val now = System.currentTimeMillis()
 
-                // Send immediately if the command CHANGED
-                // OR send a "keep-alive" every 1.5 seconds if the command is STILL the same (and not stop)
-                // This satisfies the 2.0s server watchdog without spamming the network
                 if (commandToSend != lastSentCommand || (commandToSend != "stop" && now - lastSentTime > 1500)) {
                     sendNetworkCommand(commandToSend)
                     lastSentCommand = commandToSend
                     lastSentTime = now
                 }
-
-                delay(50) // Small tick delay to prevent CPU spinning
+                delay(50)
             }
         }
     }
@@ -328,13 +320,9 @@ class MainActivity : ComponentActivity() {
                 .build()
 
             httpClient.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    Log.e("HTTP_CMD", "Unexpected code $response")
-                }
+                if (!response.isSuccessful) Log.e("HTTP_CMD", "Unexpected code $response")
             }
-        } catch (e: Exception) {
-            Log.e("HTTP_CMD", "Send failed: ${e.message}")
-        }
+        } catch (e: Exception) { Log.e("HTTP_CMD", "Send failed: ${e.message}") }
     }
 
     private fun startHttpStream() {
@@ -344,12 +332,10 @@ class MainActivity : ComponentActivity() {
                 val request = Request.Builder().url("http://pametno-vozilo.local:1607/video_feed").build()
                 httpClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        connected = false
-                        return@launch
+                        connected = false; return@launch
                     }
                     connected = true
                     val inputStream = response.body.byteStream()
-
                     val buffer = ByteArray(8192)
                     var bytesRead: Int
                     val streamBuffer = ByteArrayOutputStream()
@@ -360,24 +346,18 @@ class MainActivity : ComponentActivity() {
 
                         streamBuffer.write(buffer, 0, bytesRead)
                         val data = streamBuffer.toByteArray()
-
                         val startIndex = findJpegStart(data)
                         val endIndex = findJpegEnd(data, startIndex)
 
                         if (startIndex != -1 && endIndex != -1) {
                             val jpegData = data.copyOfRange(startIndex, endIndex + 2)
                             val bitmap = BitmapFactory.decodeByteArray(jpegData, 0, jpegData.size)
-
-                            if (bitmap != null) {
-                                processFrame(bitmap)
-                            }
+                            if (bitmap != null) processFrame(bitmap)
 
                             val remainingData = data.copyOfRange(endIndex + 2, data.size)
                             streamBuffer.reset()
                             streamBuffer.write(remainingData)
-                        } else if (streamBuffer.size() > 5 * 1024 * 1024) {
-                            streamBuffer.reset()
-                        }
+                        } else if (streamBuffer.size() > 5 * 1024 * 1024) { streamBuffer.reset() }
                     }
                 }
             } catch (e: Exception) {
@@ -408,28 +388,24 @@ class MainActivity : ComponentActivity() {
         connected = false
     }
 
+    // --- Simplified Process Frame (No Local YOLO) ---
     private fun processFrame(bitmap: Bitmap) {
         val currentTime = System.currentTimeMillis()
-        if (currentTime - lastFrameProcessTime < 66) return
+        if (currentTime - lastFrameProcessTime < 100) return // Throttled for battery life
         lastFrameProcessTime = currentTime
 
         scope.launch(Dispatchers.Main) {
             currentFrame = bitmap
-
             if (isRecording) {
                 synchronized(recordedFrames) { recordedFrames.add(bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)) }
             }
 
-            val inputImage = InputImage.fromBitmap(bitmap, 0)
             if (isOcrRunning) {
+                val inputImage = InputImage.fromBitmap(bitmap, 0)
                 recognizer.process(inputImage).addOnSuccessListener { visionText ->
                     val detected = visionText.text.lines().firstOrNull { it.isNotBlank() } ?: ""
                     if (detected != ocrResultText) ocrResultText = detected
                 }
-            }
-
-            if (isYoloActive) {
-                objectDetector.process(inputImage).addOnSuccessListener { objects -> detectedObjects = objects }
             }
         }
     }
@@ -438,34 +414,17 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
         stopHttpStream()
         recognizer.close()
-        objectDetector.close()
         scope.cancel()
     }
 
+    // --- Simplified Video Section (Stream handles drawing) ---
     @Composable
-    fun VideoSectionLive(isOn: Boolean, ocrOverlay: String, objects: List<DetectedObject>, isOcrRunning: Boolean, isOcrAutoPilot: Boolean, isFollowActive: Boolean, frame: Bitmap?) {
-        val textPaint = remember { Paint().apply { textSize = 38f; typeface = Typeface.DEFAULT_BOLD; setShadowLayer(3f, 2f, 2f, android.graphics.Color.BLACK) } }
-
+    fun VideoSectionLive(isOn: Boolean, ocrOverlay: String, isOcrRunning: Boolean, isOcrAutoPilot: Boolean, frame: Bitmap?) {
         Card(modifier = Modifier.fillMaxWidth().height(220.dp), shape = RoundedCornerShape(20.dp), border = BorderStroke(1.dp, ThemeBlue.copy(0.1f)), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
             Box(Modifier.fillMaxSize().background(Color.Black), Alignment.Center) {
                 if (isOn && frame != null) {
+                    // Just show the raw stream. If Remote Detection is on, the RPi will have drawn the boxes onto this frame already.
                     Image(bitmap = frame.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
-
-                    Canvas(Modifier.fillMaxSize()) {
-                        val scaleX = size.width / frame.width
-                        val scaleY = size.height / frame.height
-
-                        objects.forEach { obj ->
-                            val box = obj.boundingBox
-                            val rectColor = if(isFollowActive) ThemeSuccess else Color.Yellow
-                            drawRect(color = rectColor, topLeft = Offset(box.left * scaleX, box.top * scaleY), size = Size(box.width() * scaleX, box.height() * scaleY), style = Stroke(width = 2.dp.toPx()))
-
-                            // Draws the name and percentage using your Custom Model data
-                            obj.labels.firstOrNull { it.confidence > 0.4f }?.let { label ->
-                                drawContext.canvas.nativeCanvas.drawText("${label.text.uppercase()} ${(label.confidence * 100).toInt()}%", box.left * scaleX, (box.top * scaleY) - 15, textPaint.apply { color = rectColor.toArgb() })
-                            }
-                        }
-                    }
 
                     if (isOcrRunning && ocrOverlay.isNotBlank()) {
                         Box(Modifier.align(Alignment.BottomStart).padding(10.dp).background(Color.Black.copy(0.6f), RoundedCornerShape(6.dp)).padding(6.dp)) {
@@ -521,7 +480,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // --- UPDATED: Highly reliable hold-to-move, release-to-stop logic ---
     @Composable
     fun BoxScope.DPadBtn(label: String, btnAlign: Alignment, size: androidx.compose.ui.unit.Dp, targetCmd: String, currentCmd: String, onCmdChange: (String) -> Unit) {
         val currentColorScheme = MaterialTheme.colorScheme
@@ -534,17 +492,11 @@ class MainActivity : ComponentActivity() {
                 .pointerInput(Unit) {
                     awaitPointerEventScope {
                         while (true) {
-                            // Wait for the user to physically touch the screen
                             awaitFirstDown(requireUnconsumed = false)
                             onCmdChange(targetCmd)
-
-                            // Keep checking the touch event.
-                            // Loop continues as long as a finger is pressed on the screen
                             do {
                                 val event = awaitPointerEvent()
                             } while (event.changes.any { it.pressed })
-
-                            // The exact moment the finger is lifted, send stop
                             onCmdChange("stop")
                         }
                     }
@@ -559,7 +511,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // --- UPDATED: Highly reliable hold-to-move, release-to-stop logic ---
     @Composable
     fun BoxScope.RotationBtn(icon: ImageVector, btnAlign: Alignment, targetCmd: String, currentCmd: String, onCmdChange: (String) -> Unit) {
         val currentColorScheme = MaterialTheme.colorScheme
@@ -572,16 +523,11 @@ class MainActivity : ComponentActivity() {
                 .pointerInput(Unit) {
                     awaitPointerEventScope {
                         while (true) {
-                            // Wait for the user to physically touch the screen
                             awaitFirstDown(requireUnconsumed = false)
                             onCmdChange(targetCmd)
-
-                            // Loop continues as long as a finger is pressed
                             do {
                                 val event = awaitPointerEvent()
                             } while (event.changes.any { it.pressed })
-
-                            // The exact moment the finger is lifted, send stop
                             onCmdChange("stop")
                         }
                     }
