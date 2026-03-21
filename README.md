@@ -51,14 +51,12 @@
 
 ## 🔧 Mrežna Konfiguracija
 
-Aplikacija komunicira sa vozilom kroz zatvorenu lokalnu mrežu:
+Aplikacija komunicira sa vozilom kroz zatvorenu lokalnu mrežu, a preko hotspota, ili preko wifi-a ako su uredjaji povezani na istu mrezu
 
-> [!IMPORTANT]
-> Proverite da li je uređaj povezan na Hotspot vozila (`192.168.4.1`) pre pokretanja sesije.
 
 * **UDP Control:** `pametno-vozilo` (Low-latency kontrola)
 * **HTTP Stream:** `http://pametno-vozilo/stream` (AI Rendered Feed)
-* **Command Sync:** Automatska sinhronizacija OCR statusa sa vozila na klijent.
+* **Command:** Automatska OCR analiza sa vozila na klijent.
 
 ---
 
