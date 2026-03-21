@@ -1,39 +1,39 @@
 <div align="center">
 
-# 📱 YOLO Projekat Android
-### *Moderni AI Kontrolni Centar za Autonomna Vozila*
+# 📱 Pametno Vozilo Android
+### *Moderni Kontrolni Terminal za Autonomne Sisteme*
 
-[![Kotlin](https://img.shields.io/badge/Kotlin-1.9%2B-38bdf8?style=for-the-badge&logo=kotlin&logoColor=white)](https://kotlinlang.org/)
-[![Jetpack Compose](https://img.shields.io/badge/UI-Jetpack_Compose-075985?style=for-the-badge&logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
-[![WebRTC](https://img.shields.io/badge/Stream-WebRTC-33AAFF?style=for-the-badge&logo=webrtc&logoColor=white)](https://webrtc.org/)
-[![ML Kit](https://img.shields.io/badge/AI-Google_ML_Kit-38bdf8?style=for-the-badge&logo=googlecloud&logoColor=white)](https://developers.google.com/ml-kit)
-[![License: MIT](https://img.shields.io/badge/License-MIT-94a3b8?style=for-the-badge)](https://opensource.org/licenses/MIT)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.0%2B-38bdf8?style=for-the-badge&logo=kotlin&logoColor=white)](https://kotlinlang.org/)
+[![Jetpack Compose](https://img.shields.io/badge/UI-Material_3-075985?style=for-the-badge&logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
+[![Edge AI](https://img.shields.io/badge/AI-YOLOv26_on_RPi5-FF8C00?style=for-the-badge&logo=raspberrypi&logoColor=white)](https://www.raspberrypi.com/)
+[![OCR](https://img.shields.io/badge/OCR-Text_Commands-2ECC71?style=for-the-badge&logo=googlecloud&logoColor=white)](https://developers.google.com/ml-kit)
+[![Android 15](https://img.shields.io/badge/Platform-Android_15%2B-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://developer.android.com/)
 
 ---
 
 <p align="center">
-  <b>YOLO Vozilo Android</b> pretvara tvoj mobilni uređaj u napredni terminal za upravljanje. 
-  <br>Razvijena korišćenjem <b>Jetpack Compose</b>-a, uz <b>WebRTC</b> i <b>UDP</b> protokole, aplikacija nudi besprekoran spoj performansi, nulte latencije i modernog dizajna.
+  <b>Pametno Vozilo Android</b> predstavlja visokooptimizovani klijentski interfejs. 
+  <br>Sva AI obrada, iscrtavanje detekcionih frejmova se vrše na <b>Edge</b> nivou (RPi 5), dok aplikacija služi za telemetriju, OCR analizu, vizuelni nadzor i manuelno upravljanje.
 </p>
 
 </div>
 
 ## 🚀 Ključni Moduli
 
-### 🧠 Vizuelna Inteligencija (AI)
-* **Object Tracking:** Dinamička detekcija objekata u realnom vremenu koristeći **YOLO (You Only Look Once)** logiku implementiranu kroz optimizovane ML Kit modele nad WebRTC frejmovima.
-* **Smart Follow Mode:** Inteligentni algoritam koji omogućava vozilu da samostalno prati cilj na osnovu analize P2P video strima.
-* **OCR Autopilot:** Napredna ekstrakcija teksta (`Google ML Kit`) za automatsko izvršavanje pisanih komandi iz okruženja.
+### 🧠 Server-Side Vision (AI & OCR)
+* **Pre-Rendered Stream:** Raspberry Pi obrađuje YOLOv8 detekciju i iscrtava "Bounding Boxes" direktno na frejmove pre slanja. Android aplikacija samo prikazuje gotov video feed, čime se postiže 0% CPU opterećenja za AI na mobilnom uređaju.
+* **OCR Command System:** Sistem na vozilu prepoznaje tekstualne komande iz okruženja (npr. saobraćajne znake ili ispisana uputstva) i automatski prilagođava kretanje, dok se status prepoznate komande ispisuje u realnom vremenu na Android terminalu.
+* **Zero-Latency Display:** Optimizovano učitavanje slika visoke frekvencije koje obezbeđuje fluidan prikaz kretanja vozila.
 
 ### 🎮 Kontrolni Inženjering
-* **WebRTC P2P Stream:** Hardverski ubrzan video prenos koji eliminiše baferovanje i omogućava čist real-time feed na 15+ FPS.
-* **Zero-Latency UDP:** Komunikacija sa motorima se odvija preko `DatagramSocket`-a, čime se preskače handshake overhead i omogućava momentalni odziv.
-* **Dual-Interface Control:** Biraj između preciznog D-Pad-a za tehničke manevre ili intuitivnog džojstika za fluidnu vožnju.
+* **Direct UDP Command Bridge:** Trenutni prenos korisničkih komandi sa džojstika na motore putem `DatagramSocket`-a (Port 1606).
+* **Bi-Directional Feedback:** Aplikacija ne samo da šalje komande, već i vizuelno potvrđuje prijem OCR naredbi koje je vozilo samostalno donelo.
+* **Custom Joystick UI:** Razvijen u Jetpack Compose-u, sa podrškom za precizno upravljanje brzinom i pravcem.
+* **Arrows Control:** Kontrola pomocu strelica
 
-### 📼 Media & Recording
-* **Native MP4 Encoding:** Snimanje WebRTC frejmova direktno u MP4 format koristeći `MediaCodec` i `MediaMuxer` (hardverska akceleracija).
-* **JNI Memory Management:** Stroga kontrola C++ pointera kroz WebRTC `I420Buffer` i `retain/release` ciklus za stabilan rad bez curenja memorije.
-* **16KB Page Alignment:** Potpuna optimizacija NDK i JNI biblioteka za kompatibilnost sa Android 15+ uređajima i novim CPU arhitekturama.
+### 📼 Optimizacija & Stabilnost
+* **Thin Client Architecture:** Minimalna potrošnja baterije i resursa, omogućavajući dugotrajan rad na terenu.
+* **16KB Page Alignment:** Potpuna podrška za Android 15 arhitekturu, osiguravajući kompatibilnost sa najnovijim standardima bezbednosti i performansi.
 
 ---
 
@@ -41,36 +41,34 @@
 
 | Komponenta | Tehnologija | Uloga |
 | :--- | :--- | :--- |
-| **Arhitektura** | MVVM | Čista i testabilna logika |
-| **UI Framework** | Jetpack Compose | Deklarativni "Glass" interfejs |
-| **Networking** | WebRTC / UDP / OkHttp | P2P Video, brze komande i SDP Signaling |
-| **AI Processing** | Google ML Kit (YOLO) | On-device Computer Vision detekcija |
-| **Asinhronost** | Kotlin Coroutines | Multithreaded obrada i mrežni pozivi |
+| **UI Framework** | Jetpack Compose (M3) | Fluidni "Glass" interfejs i animacije |
+| **Networking** | HTTP Stream / UDP | Prijem obrađenog strima i slanje komandi |
+| **AI Processing** | YOLOv26 (Server-Side) | Detekcija objekata na Raspberry Pi 5 |
+| **OCR Engine** | OCR Intelligence | Prepoznavanje tekstualnih naredbi |
+| **Asinhronost** | Kotlin Coroutines | Efikasno upravljanje mrežnim saobraćajem |
 
 ---
 
 ## 🔧 Mrežna Konfiguracija
 
-
-
-Aplikacija komunicira sa Raspberry Pi serverom kroz hibridnu mrežnu arhitekturu:
+Aplikacija komunicira sa vozilom kroz zatvorenu lokalnu mrežu:
 
 > [!IMPORTANT]
-> Proverite da li je mobilni uređaj povezan na istu lokalnu mrežu (WiFi Hotspot) kao i Raspberry Pi.
+> Proverite da li je uređaj povezan na Hotspot vozila (`192.168.4.1`) pre pokretanja sesije.
 
-* **UDP Command Channel:** `192.168.4.1:1606` (Datagram paketi za motore)
-* **WebRTC Signaling:** `http://192.168.4.1:1607/offer` (HTTP POST za razmenu SDP protokola)
-* **Video Channel:** Direktna Peer-to-Peer WebRTC konekcija nakon uspostavljanja signala.
+* **UDP Control:** `pametno-vozilo` (Low-latency kontrola)
+* **HTTP Stream:** `http://pametno-vozilo/stream` (AI Rendered Feed)
+* **Command Sync:** Automatska sinhronizacija OCR statusa sa vozila na klijent.
 
 ---
 
 ## 🎨 Vizuelni Identitet
 
-Dizajn aplikacije prati **Glassmorphism** principe u skladu sa web portalom:
-* **Primary:** `#3498DB` (Theme Blue)
-* **Success/Active:** `#2ECC71` (Theme Success)
-* **Alert/Recording:** `#E74C3C` (Theme Alert)
-* **Background:** Adaptivni Dark/Light mod (`#121212` / `#FDFDFD`)
+Dizajn prati **Dark Future** temu sa fokusom na preglednost:
+* 🔵 **Primary:** `#3498DB` — Glavna navigacija
+* 🟢 **OCR Active:** `#2ECC71` — Potvrda prepoznate tekstualne komande
+* 🟠 **AI Processing:** `#FF8C00` — Indikator aktivne YOLO detekcije
+* 🌚 **Background:** `#121212` — Maksimalna ušteda energije na OLED ekranima.
 
 ---
 
